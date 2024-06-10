@@ -1,0 +1,198 @@
+-- Covid 19 Data Exploration using postgresql
+--Skills used: Joins, CTE, Temp Tables, Windows Functions, Aggregate Functions,Views and Data Type Conversion
+
+-- Selecting columns to start the analysis with, and getting familiar with the data
+
+select location,date,total_cases,new_cases,total_deaths,population
+from coviddeaths
+where continent is not null
+order by 1,2;
+
+
+--How many countries(location) and continents are covered in the data set
+
+select count(distinct(continent)) as total_continents, count(distinct(location)) as total_countries
+from coviddeaths;
+
+
+--Global death to case ratio
+
+select sum(new_cases) as total_cases,sum(new_deaths) as total_deaths,
+	round((sum(new_deaths)/sum(new_cases)*100),2) as globaldeath_percentage
+from coviddeaths;
+
+
+--Total cases and total deaths by continent
+
+select continent, sum(new_cases) as casecount, sum(new_deaths) as Deathcount
+from coviddeaths
+where continent is not null
+group by continent
+order by 2 desc;
+
+
+--top 10 countries with highest cases
+
+select location,population,sum(new_cases) as total_cases
+from coviddeaths
+where (continent,total_cases) is not null
+group by 1,2
+order by 2 desc limit 10;
+
+
+-- Countries Infection Rate compared to Population
+
+select location,population,max(total_cases) as highest_infected_count,
+	round(max((total_cases/population))*100,2) as percentage_of_pop_infected
+from coviddeaths
+where (population,total_cases) is not null
+group by location,population
+order by 4 desc;
+
+
+-- Countries death Rate compared to Population
+
+select location,population,max(total_deaths) as highest_death_count,
+	round(max((total_deaths/population))*100,3) as percentage_of_death
+from coviddeaths
+where (population,total_deaths) is not null
+group by location,population
+order by 4 desc;
+
+
+--Drilling down to Africa
+
+
+--African countries infection count 
+
+select location, sum(new_cases) as total_cases
+from coviddeaths
+where (continent,new_cases) is not NULL 
+and continent = 'Africa'
+group by location
+order by total_cases desc;
+
+
+--African countries deaths count 
+
+select location, sum(new_deaths) as total_death
+from coviddeaths
+where (continent,new_deaths) is not NULL 
+and continent = 'Africa'
+group by location
+order by 2 desc;
+
+
+--African countries population-infection rate, population-deaths rate, and population-vaccination rate
+
+select cd.location, cd.population,
+	round((max(cd.total_cases)/ cd.population)*100,2) Infection_rate,
+    round((max(cd.total_deaths)/ cd.population)*100,2) Death_rate,
+	round((max(cv.total_vaccinations)/ cd.population)*100,2) as Vaccination_rate
+from coviddeaths cd 
+join covidvaccinations cv
+	on cd.location = cv.location 
+	and cd.date = cv.date
+where (cd.location, cv.total_vaccinations) is not null and cd.continent = 'Africa'
+group by cd.location,cd.population
+order by Vaccination_rate desc;
+
+
+--Drilling down to Nigeria
+
+--Total death Vs Population in Nigeria
+
+select population,sum(new_deaths) as total_deaths,
+	round((sum(new_deaths)/population*100),3) as percentage_population_infected
+from coviddeaths
+where location = 'Nigeria'
+group by 1
+
+
+--total_cases Vs total_deaths in Nigeria
+
+select sum(new_cases) as total_cases,sum(new_deaths) as total_deaths,
+	round((sum(new_deaths)/sum(new_cases)*100),2) as death_percentage
+from coviddeaths
+where location = 'Nigeria';
+
+
+--total number of vaccinations given in Nigeria
+
+select cd.location, cd.population,max(cv.total_vaccinations)
+from coviddeaths cd 
+join covidvaccinations cv
+	on cd.location = cv.location 
+	and cd.date = cv.date
+where (cv.total_vaccinations,cd.continent) is not null
+and cd.location = 'Nigeria'
+group by cd.location,cd.population;
+
+
+--Global population vaccinated
+
+select cd.continent,cd.location,cd.date,cd.population,cv.new_vaccinations,
+	sum(cv.new_vaccinations) over (partition by cd.location order by cd.date) as rollingtotalvaccinated
+from coviddeaths cd 
+join covidvaccinations cv
+	on cd.location = cv.location 
+	and cd.date = cv.date
+where (cv.new_vaccinations,cd.continent) is not null
+order by 2
+
+
+-- Using CTE to perform Calculation on Partition By in previous query.,
+--to get percentage of people vaccinated per day
+
+With popvsvac (continent,location,date,population,new_vaccinations,rollingtotalvaccinated)
+as
+(
+select cd.continent,cd.location,cd.date,cd.population,cv.new_vaccinations,
+	sum(cv.new_vaccinations) over (partition by cd.location order by cd.date) as rollingtotalvaccinated
+from coviddeaths cd 
+join covidvaccinations cv
+	on cd.location = cv.location 
+	and cd.date = cv.date
+where (cv.new_vaccinations,cd.continent) is not null
+)
+select *,round((rollingtotalvaccinated/population)*100,2) as Percentagepeoplevaccinated
+from popvsvac
+
+
+--using temp table, to arrive at the same answer, to get percentage of people vaccinated per day
+
+drop table if exists percentagepopulationvaccinated;
+create table percentagepopulationvaccinated
+(
+continent varchar(255),
+location varchar(255),
+date date,
+population numeric,
+new_vaccinations numeric,
+rollingtotalvaccinated numeric
+);
+
+insert into percentagepopulationvaccinated
+select cd.continent,cd.location,cd.date,cd.population,cv.new_vaccinations,
+	sum(cv.new_vaccinations) over (partition by cd.location order by cd.date) as rollingtotalvaccinated
+from coviddeaths cd 
+join covidvaccinations cv
+	on cd.location = cv.location 
+	and cd.date = cv.date
+where (cd.continent,cv.new_vaccinations) is not null;
+
+Select *, round((rollingtotalvaccinated/Population)*100,2) as Percentagepeoplevaccinated
+From percentagepopulationvaccinated;
+
+
+-- Creating View to store data for later visualizations
+
+create view percentage_population_vaccinated as
+select cd.continent,cd.location,cd.date,cd.population,cv.new_vaccinations,
+	sum(cv.new_vaccinations) over (partition by cd.location order by cd.date) as rollingtotalvaccinated
+from coviddeaths cd 
+join covidvaccinations cv
+	on cd.location = cv.location 
+	and cd.date = cv.date
+where cd.continent is not null;
+ 
